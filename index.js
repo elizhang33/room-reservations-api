@@ -1,14 +1,14 @@
 import express from "express";
 import cors from "cors";
 import pkg from "pg";
+import { v4 as uuidv4 } from 'uuid';
 
 const { Pool } = pkg;
 
 const app = express();
 app.use(express.json());
-app.use(cors({ origin: "*"})); // tighten this later if you want
+app.use(cors({ origin: "*"}));
 
-// Step 3 - Update the room inventory in index.js on Render API
 const INVENTORY = {
   Library: [
     { room: 'L201', capacity: 5 },
@@ -47,6 +47,11 @@ const INVENTORY = {
   ]
 };
 
+function overlaps(existingStart, existingEnd, newStart, newEnd) {
+  return (newStart < existingEnd) && (existingStart < newEnd);
+}
+
+app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 3000;
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -57,7 +62,7 @@ if (!DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false } // <-- enable TLS for managed Postgres
+  ssl: { rejectUnauthorized: false } 
 });
 
 // create table if not exists
@@ -89,7 +94,6 @@ ensureSchema().catch(err => {
 const ok = (res, data) => res.status(200).json(data);
 const bad = (res, code, msg) => res.status(code).json({ error: msg });
 
-// routes
 app.get("/", (req, res) => ok(res, { ok: true, service: "room-reservations" }));
 
 app.post("/reserve", async (req, res) => {
