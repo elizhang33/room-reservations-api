@@ -51,6 +51,32 @@ function overlaps(existingStart, existingEnd, newStart, newEnd) {
   return (newStart < existingEnd) && (existingStart < newEnd);
 }
 
+async function findAvailableRoom(buildingOrNull, groupSize, startISO, endISO) {
+  const buildingsToTry = buildingOrNull ? [buildingOrNull].concat(ALL_BUILDINGS.filter(b => b !== buildingOrNull))
+                                        : ALL_BUILDINGS.slice();
+
+  for (const b of buildingsToTry) {
+    const rooms = (INVENTORY[b] || []).filter(r => r.capacity >= groupSize);
+    if (rooms.length === 0) continue;
+
+    const res = await pool.query(
+      `SELECT room, start_time, end_time FROM reservations
+       WHERE building = $1
+         AND NOT (end_time <= $2 OR start_time >= $3)`,
+      [b, startISO, endISO]
+    );
+    const taken = res.rows || [];
+
+    for (const r of rooms) {
+      const conflict = taken.some(t => t.room === r.room && overlaps(t.start_time, t.end_time, startISO, endISO));
+      if (!conflict) {
+        return { building: b, room: r.room, capacity: r.capacity };
+      }
+    }
+  }
+  return null;
+}
+
 app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 3000;
@@ -98,24 +124,34 @@ app.get("/", (req, res) => ok(res, { ok: true, service: "room-reservations" }));
 
 app.post("/reserve", async (req, res) => {
   try {
-    const { userId, building, room, groupSize, startTime, endTime, equipment } = req.body;
-    if (!userId || !building || !room || !startTime || !endTime) {
-      return bad(res, 400, "Missing required fields: userId, building, room, startTime, endTime");
+    const { userId, building, groupSize, startTime, endTime, equipment } = req.body;
+    if (!userId || !groupSize || !startTime || !endTime) {
+      return res.status(400).json({ error: "userId, groupSize, startTime, endTime are required" });
+    }
+    const gs = Number(groupSize);
+    if (!Number.isFinite(gs) || gs <= 0) {
+      return res.status(400).json({ error: "groupSize must be a positive number" });
+    }
+
+    const chosen = await findAvailableRoom(building || null, gs, startTime, endTime);
+    if (!chosen) {
+      return res.status(200).json({ error: "No room available for that size and time across buildings" });
     }
 
     const result = await pool.query(
       `INSERT INTO reservations (user_id, building, room, group_size, start_time, end_time, equipment)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       RETURNING *`,
-      [userId, building, room, groupSize ?? null, startTime, endTime, equipment ?? null]
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [userId, chosen.building, chosen.room, gs, startTime, endTime, equipment ?? null]
     );
 
-    ok(res, result.rows[0]);
+    const row = result.rows[0];
+    res.status(200).json(row);
   } catch (e) {
-    console.error(e);
-    bad(res, 400, e.message);
+    console.error("Reserve error:", e);
+    res.status(400).json({ error: e.message });
   }
 });
+
 
 app.get("/get", async (req, res) => {
   try {
@@ -131,6 +167,27 @@ app.get("/get", async (req, res) => {
   } catch (e) {
     console.error(e);
     bad(res, 400, e.message);
+  }
+});
+
+app.get("/availability2", async (req, res) => {
+  try {
+    const building = req.query.building || null;
+    const start = req.query.start;
+    const end = req.query.end;
+    const groupSize = Number(req.query.groupSize);
+
+    if (!start || !end || !Number.isFinite(groupSize) || groupSize <= 0) {
+      return res.status(400).json({ error: "start, end, groupSize are required" });
+    }
+
+    const chosen = await findAvailableRoom(building, groupSize, start, end);
+    if (!chosen) return res.status(200).json({ available: false });
+
+    return res.status(200).json({ available: true, building: chosen.building, room: chosen.room, capacity: chosen.capacity });
+  } catch (e) {
+    console.error("Availability2 error:", e);
+    res.status(400).json({ error: e.message });
   }
 });
 
