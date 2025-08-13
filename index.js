@@ -8,6 +8,46 @@ const app = express();
 app.use(express.json());
 app.use(cors({ origin: "*"})); // tighten this later if you want
 
+// Step 3 - Update the room inventory in index.js on Render API
+const INVENTORY = {
+  Library: [
+    { room: 'L201', capacity: 5 },
+    { room: 'L202', capacity: 8 },
+    { room: 'L203', capacity: 10 },
+    { room: 'L204', capacity: 12 },
+    { room: 'L205', capacity: 15 }
+  ],
+  Engineering: [
+    { room: 'E101', capacity: 5 },
+    { room: 'E102', capacity: 7 },
+    { room: 'E103', capacity: 9 },
+    { room: 'E104', capacity: 12 },
+    { room: 'E105', capacity: 15 }
+  ],
+  Science: [
+    { room: 'S301', capacity: 5 },
+    { room: 'S302', capacity: 6 },
+    { room: 'S303', capacity: 8 },
+    { room: 'S304', capacity: 10 },
+    { room: 'S305', capacity: 14 }
+  ],
+  Business: [
+    { room: 'B401', capacity: 5 },
+    { room: 'B402', capacity: 6 },
+    { room: 'B403', capacity: 9 },
+    { room: 'B404', capacity: 11 },
+    { room: 'B405', capacity: 15 }
+  ],
+  'Student Center': [
+    { room: 'SC501', capacity: 5 },
+    { room: 'SC502', capacity: 7 },
+    { room: 'SC503', capacity: 8 },
+    { room: 'SC504', capacity: 12 },
+    { room: 'SC505', capacity: 15 }
+  ]
+};
+
+
 const PORT = process.env.PORT || 3000;
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
