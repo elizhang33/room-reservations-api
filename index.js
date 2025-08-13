@@ -15,7 +15,10 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
-const pool = new Pool({ connectionString: DATABASE_URL });
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false } // <-- enable TLS for managed Postgres
+});
 
 // create table if not exists
 const ensureSchema = async () => {
