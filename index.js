@@ -77,8 +77,6 @@ async function findAvailableRoom(buildingOrNull, groupSize, startISO, endISO) {
   return null;
 }
 
-app.use(bodyParser.json());
-
 const PORT = process.env.PORT || 3000;
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
