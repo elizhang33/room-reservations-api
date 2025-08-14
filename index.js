@@ -47,13 +47,22 @@ const INVENTORY = {
   ]
 };
 
+const ALL_BUILDINGS = Object.keys(INVENTORY);
+const NAME_MAP = Object.fromEntries(ALL_BUILDINGS.map(b => [b.toLowerCase(), b]));
+const normalizeBuilding = v => (v ? NAME_MAP[String(v).trim().toLowerCase()] : null);
+
+
 function overlaps(existingStart, existingEnd, newStart, newEnd) {
-  return (newStart < existingEnd) && (existingStart < newEnd);
+  const es = new Date(existingStart).getTime();
+  const ee = new Date(existingEnd).getTime();
+  const ns = new Date(newStart).getTime();
+  const ne = new Date(newEnd).getTime();
+  return (ns < ee) && (es < ne);
 }
 
 const ALL_BUILDINGS = Object.keys(INVENTORY);
 
-async function findAvailableRoom(buildingOrNull, groupSize, startISO, endISO) {
+async function findAvailableRoom(buildingOrNull, groupSize, startISO, endISO, opts = {}) {
   const strict = !!opts.strict;
   const buildingsToTry = buildingOrNull
     ? (strict ? [buildingOrNull] : [buildingOrNull].concat(ALL_BUILDINGS.filter(b => b !== buildingOrNull)))
@@ -95,6 +104,8 @@ const pool = new Pool({
 
 // create table if not exists
 const ensureSchema = async () => {
+  // gen_random_uuid() needs pgcrypto
+  await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS reservations (
       reservation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -110,9 +121,6 @@ const ensureSchema = async () => {
       updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
-
-  // gen_random_uuid() needs pgcrypto
-  await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 };
 ensureSchema().catch(err => {
   console.error("Schema init error:", err);
@@ -135,7 +143,7 @@ app.post("/reserve", async (req, res) => {
       return res.status(400).json({ error: "groupSize must be a positive number" });
     }
 
-    const chosen = await findAvailableRoom(building || null, gs, startTime, endTime);
+    const chosen = await findAvailableRoom(building, gs, startTime, endTime, { strict });
     if (!chosen) {
       return res.status(200).json({ error: "No room available for that size and time across buildings" });
     }
@@ -143,7 +151,7 @@ app.post("/reserve", async (req, res) => {
     const result = await pool.query(
       `INSERT INTO reservations (user_id, building, room, group_size, start_time, end_time, equipment)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [userId, chosen.building, chosen.room, gs, startTime, endTime, equipment ?? null]
+      [userId, normalizeBuilding(chosen.building), chosen.room, gs, startTime, endTime, equipment || null]
     );
 
     const row = result.rows[0];
@@ -174,7 +182,8 @@ app.get("/get", async (req, res) => {
 
 app.get("/availability2", async (req, res) => {
   try {
-    const building  = req.query.building || null;
+    const buildingRaw = req.query.building || null;
+    const building = normalizeBuilding(buildingRaw);
     const start     = req.query.start;
     const end       = req.query.end;
     const groupSize = Number(req.query.groupSize);
