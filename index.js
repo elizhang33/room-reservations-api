@@ -54,8 +54,10 @@ function overlaps(existingStart, existingEnd, newStart, newEnd) {
 const ALL_BUILDINGS = Object.keys(INVENTORY);
 
 async function findAvailableRoom(buildingOrNull, groupSize, startISO, endISO) {
-  const buildingsToTry = buildingOrNull ? [buildingOrNull].concat(ALL_BUILDINGS.filter(b => b !== buildingOrNull))
-                                        : ALL_BUILDINGS.slice();
+  const strict = !!opts.strict;
+  const buildingsToTry = buildingOrNull
+    ? (strict ? [buildingOrNull] : [buildingOrNull].concat(ALL_BUILDINGS.filter(b => b !== buildingOrNull)))
+    : ALL_BUILDINGS.slice();
 
   for (const b of buildingsToTry) {
     const rooms = (INVENTORY[b] || []).filter(r => r.capacity >= groupSize);
@@ -172,19 +174,25 @@ app.get("/get", async (req, res) => {
 
 app.get("/availability2", async (req, res) => {
   try {
-    const building = req.query.building || null;
-    const start = req.query.start;
-    const end = req.query.end;
+    const building  = req.query.building || null;
+    const start     = req.query.start;
+    const end       = req.query.end;
     const groupSize = Number(req.query.groupSize);
+    const strict    = String(req.query.strict).toLowerCase() === 'true';
 
     if (!start || !end || !Number.isFinite(groupSize) || groupSize <= 0) {
       return res.status(400).json({ error: "start, end, groupSize are required" });
     }
 
-    const chosen = await findAvailableRoom(building, groupSize, start, end);
+    const chosen = await findAvailableRoom(building, groupSize, start, end, { strict });
     if (!chosen) return res.status(200).json({ available: false });
 
-    return res.status(200).json({ available: true, building: chosen.building, room: chosen.room, capacity: chosen.capacity });
+    return res.status(200).json({
+      available: true,
+      building: chosen.building,
+      room: chosen.room,
+      capacity: chosen.capacity
+    });
   } catch (e) {
     console.error("Availability2 error:", e);
     res.status(400).json({ error: e.message });
