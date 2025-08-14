@@ -60,8 +60,6 @@ function overlaps(existingStart, existingEnd, newStart, newEnd) {
   return (ns < ee) && (es < ne);
 }
 
-const ALL_BUILDINGS = Object.keys(INVENTORY);
-
 async function findAvailableRoom(buildingOrNull, groupSize, startISO, endISO, opts = {}) {
   const strict = !!opts.strict;
   const buildingsToTry = buildingOrNull
