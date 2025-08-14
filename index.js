@@ -141,7 +141,7 @@ app.post("/reserve", async (req, res) => {
       return res.status(400).json({ error: "groupSize must be a positive number" });
     }
 
-    const chosen = await findAvailableRoom(building, gs, startTime, endTime, { strict });
+    const chosen = await findAvailableRoom(building, gs, startTime, endTime);
     if (!chosen) {
       return res.status(200).json({ error: "No room available for that size and time across buildings" });
     }
