@@ -255,51 +255,99 @@ app.post("/cancel", async (req, res) => {
   }
 });
 
-// List upcoming (next 30 days) for a user, numbered for UX
+const TZ = process.env.TZ || "America/Los_Angeles";
+
+function fmtRange(startISO, endISO) {
+  const s = new Date(startISO);
+  const e = new Date(endISO);
+  const datePart = s.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: TZ });
+  const timeStart = s.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
+  const timeEnd   = e.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
+  return `${datePart}, ${timeStart}–${timeEnd}`;
+}
+
+function numberWord(n) {
+  // 1->"one", 2->"two" for nicer prompts (fallback to number)
+  const words = ["zero","one","two","three","four","five","six","seven","eight","nine","ten"];
+  return (n >= 0 && n < words.length) ? words[n] : String(n);
+}
 app.get("/reservations/upcoming", async (req, res) => {
   try {
     const { userId, days } = req.query;
     if (!userId) return bad(res, 400, "userId is required");
     const horizon = Number(days) > 0 ? Number(days) : 30;
 
-    const result = await pool.query(
+    const { rows } = await pool.query(
       `SELECT reservation_id, building, room, group_size, start_time, end_time, status
-       FROM reservations
-       WHERE user_id = $1
-         AND start_time >= NOW()
-         AND start_time <= NOW() + ($2 || ' days')::interval
-       ORDER BY start_time ASC`,
+         FROM reservations
+        WHERE user_id = $1
+          AND start_time >= NOW()
+          AND start_time <= NOW() + ($2 || ' days')::interval
+        ORDER BY start_time ASC`,
       [userId, horizon]
     );
-    ok(res, { items: result.rows });
-  } catch (e) { bad(res, 400, e.message); }
+    let speech = "";
+    if (rows.length === 0) {
+      speech = "I don’t see any upcoming reservations for you.";
+    } else if (rows.length === 1) {
+      const r = rows[0];
+      speech = `You have one upcoming reservation: ${r.building} ${r.room}, ${fmtRange(r.start_time, r.end_time)} for ${r.group_size} people. Say “cancel it” to remove this booking, or “keep it” to leave it as is.`;
+    } else {
+      const parts = rows.slice(0, 5).map((r, i) =>
+        `${i + 1}) ${r.building} ${r.room}, ${fmtRange(r.start_time, r.end_time)}`
+      );
+      const more = rows.length > 5 ? ` I’m only reading the first five of ${rows.length}.` : "";
+      speech = `You have ${rows.length} upcoming reservations. ${parts.join(". ")}.${more} Say “cancel ${numberWord(1)}”, “cancel ${numberWord(2)}”, and so on.`;
+    }
+
+    ok(res, { items: rows, speech });
+  } catch (e) {
+    bad(res, 400, e.message);
+  }
 });
 
 app.post("/cancel/by-user", async (req, res) => {
   try {
     const { userId, pickIndex } = req.body;
-    if (!userId || !pickIndex) return bad(res, 400, "userId and pickIndex are required");
+    if (!userId || pickIndex === undefined || pickIndex === null) {
+      return bad(res, 400, "userId and pickIndex are required");
+    }
+    const idx = Number(pickIndex) - 1;
+    if (!Number.isInteger(idx) || idx < 0) {
+      return bad(res, 400, "pickIndex must be a positive integer");
+    }
 
     const { rows } = await pool.query(
-      `SELECT reservation_id
+      `SELECT reservation_id, building, room, group_size, start_time, end_time
          FROM reservations
         WHERE user_id = $1 AND start_time >= NOW()
         ORDER BY start_time ASC`,
       [userId]
     );
-    const idx = Number(pickIndex) - 1;
-    if (idx < 0 || idx >= rows.length) return bad(res, 404, "Selection not found");
 
-    const reservationId = rows[idx].reservation_id;
+    if (rows.length === 0) {
+      return ok(res, { deleted: false, speech: "You don’t have any upcoming reservations to cancel." });
+    }
+    if (idx >= rows.length) {
+      return bad(res, 404, "Selection not found");
+    }
+
+    const chosen = rows[idx];
     const del = await pool.query(
       `DELETE FROM reservations WHERE reservation_id = $1 AND user_id = $2 RETURNING reservation_id`,
-      [reservationId, userId]
+      [chosen.reservation_id, userId]
     );
-    if (del.rowCount === 0) return bad(res, 404, "Reservation not found");
-    ok(res, { deleted: true, reservationId });
-  } catch (e) { bad(res, 400, e.message); }
-});
 
+    if (del.rowCount === 0) {
+      return bad(res, 404, "Reservation not found");
+    }
+
+    const speech = `Canceled: ${chosen.building} ${chosen.room}, ${fmtRange(chosen.start_time, chosen.end_time)} for ${chosen.group_size} people. Do you want to cancel anything else?`;
+    ok(res, { deleted: true, reservationId: del.rows[0].reservation_id, speech });
+  } catch (e) {
+    bad(res, 400, e.message);
+  }
+});
 
 app.get("/list", async (req, res) => {
   try {
