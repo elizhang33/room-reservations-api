@@ -255,6 +255,52 @@ app.post("/cancel", async (req, res) => {
   }
 });
 
+// List upcoming (next 30 days) for a user, numbered for UX
+app.get("/reservations/upcoming", async (req, res) => {
+  try {
+    const { userId, days } = req.query;
+    if (!userId) return bad(res, 400, "userId is required");
+    const horizon = Number(days) > 0 ? Number(days) : 30;
+
+    const result = await pool.query(
+      `SELECT reservation_id, building, room, group_size, start_time, end_time, status
+       FROM reservations
+       WHERE user_id = $1
+         AND start_time >= NOW()
+         AND start_time <= NOW() + ($2 || ' days')::interval
+       ORDER BY start_time ASC`,
+      [userId, horizon]
+    );
+    ok(res, { items: result.rows });
+  } catch (e) { bad(res, 400, e.message); }
+});
+
+app.post("/cancel/by-user", async (req, res) => {
+  try {
+    const { userId, pickIndex } = req.body;
+    if (!userId || !pickIndex) return bad(res, 400, "userId and pickIndex are required");
+
+    const { rows } = await pool.query(
+      `SELECT reservation_id
+         FROM reservations
+        WHERE user_id = $1 AND start_time >= NOW()
+        ORDER BY start_time ASC`,
+      [userId]
+    );
+    const idx = Number(pickIndex) - 1;
+    if (idx < 0 || idx >= rows.length) return bad(res, 404, "Selection not found");
+
+    const reservationId = rows[idx].reservation_id;
+    const del = await pool.query(
+      `DELETE FROM reservations WHERE reservation_id = $1 AND user_id = $2 RETURNING reservation_id`,
+      [reservationId, userId]
+    );
+    if (del.rowCount === 0) return bad(res, 404, "Reservation not found");
+    ok(res, { deleted: true, reservationId });
+  } catch (e) { bad(res, 400, e.message); }
+});
+
+
 app.get("/list", async (req, res) => {
   try {
     const { userId } = req.query;
