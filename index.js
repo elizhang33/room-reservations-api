@@ -130,35 +130,103 @@ const bad = (res, code, msg) => res.status(code).json({ error: msg });
 
 app.get("/", (req, res) => ok(res, { ok: true, service: "room-reservations" }));
 
+// app.post("/reserve", async (req, res) => {
+//   try {
+//     const { userId, building, groupSize, startTime, endTime, equipment } = req.body;
+//     if (!userId || !groupSize || !startTime || !endTime) {
+//       return res.status(400).json({ error: "userId, groupSize, startTime, endTime are required" });
+//     }
+//     const gs = Number(groupSize);
+//     if (!Number.isFinite(gs) || gs <= 0) {
+//       return res.status(400).json({ error: "groupSize must be a positive number" });
+//     }
+
+//     const chosen = await findAvailableRoom(building, gs, startTime, endTime);
+//     if (!chosen) {
+//       return res.status(200).json({ error: "No room available for that size and time across buildings" });
+//     }
+
+//     const result = await pool.query(
+//       `INSERT INTO reservations (user_id, building, room, group_size, start_time, end_time, equipment)
+//        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+//       [userId, normalizeBuilding(chosen.building), chosen.room, gs, startTime, endTime, equipment || null]
+//     );
+
+//     const row = result.rows[0];
+//     res.status(200).json(row);
+//   } catch (e) {
+//     console.error("Reserve error:", e);
+//     res.status(400).json({ error: e.message });
+//   }
+// });
+
 app.post("/reserve", async (req, res) => {
   try {
-    const { userId, building, groupSize, startTime, endTime, equipment } = req.body;
-    if (!userId || !groupSize || !startTime || !endTime) {
+    const b = req.body || {};
+
+    // Accept both camelCase and snake_case
+    const userId     = b.userId ?? b.user_id ?? null;
+    const buildingIn = (b.building === undefined || b.building === null || b.building === '') ? null : String(b.building);
+    const groupSize  = Number(b.groupSize ?? b.group_size);
+    const startRaw   = b.startTime ?? b.start_time;
+    const endRaw     = b.endTime   ?? b.end_time;
+    const equipment  = (b.equipment === undefined) ? null : b.equipment;
+
+    // Safe boolean for strict (optional)
+    const strict = (b.strict === true || b.strict === 1 || b.strict === "1" || b.strict === "true");
+
+    // Validation
+    if (!userId || !startRaw || !endRaw || !Number.isFinite(groupSize)) {
       return res.status(400).json({ error: "userId, groupSize, startTime, endTime are required" });
     }
-    const gs = Number(groupSize);
-    if (!Number.isFinite(gs) || gs <= 0) {
+    if (groupSize <= 0) {
       return res.status(400).json({ error: "groupSize must be a positive number" });
     }
 
-    const chosen = await findAvailableRoom(building, gs, startTime, endTime);
+    // Normalize times to ISO-8601
+    const start = new Date(startRaw);
+    const end   = new Date(endRaw);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ error: "startTime and endTime must be ISO-8601 strings" });
+    }
+    if (start >= end) {
+      return res.status(400).json({ error: "endTime must be after startTime" });
+    }
+    const startISO = start.toISOString();
+    const endISO   = end.toISOString();
+
+    // Find a room (buildingIn may be null → search all buildings)
+    const chosen = await findAvailableRoom(buildingIn, groupSize, startISO, endISO, { strict });
     if (!chosen) {
-      return res.status(200).json({ error: "No room available for that size and time across buildings" });
+      const where = buildingIn ? `in ${buildingIn}` : "in any building";
+      return res.status(409).json({ error: `No room available ${where} for ${groupSize} people between ${startISO} and ${endISO}.` });
     }
 
+    // Write to DB (Render Postgres)
     const result = await pool.query(
       `INSERT INTO reservations (user_id, building, room, group_size, start_time, end_time, equipment)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [userId, normalizeBuilding(chosen.building), chosen.room, gs, startTime, endTime, equipment || null]
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING *`,
+      [
+        userId,
+        normalizeBuilding(chosen.building), // keep your canonicalizer
+        chosen.room,
+        groupSize,
+        startISO,
+        endISO,
+        equipment
+      ]
     );
 
-    const row = result.rows[0];
-    res.status(200).json(row);
+    // Success — return the created row (201 Created)
+    return res.status(201).json(result.rows[0]);
+
   } catch (e) {
     console.error("Reserve error:", e);
-    res.status(400).json({ error: e.message });
+    return res.status(500).json({ error: String(e && e.message || e) });
   }
 });
+
 
 // app.post('/reserve', express.json(), async (req, res) => {
 //   try {
