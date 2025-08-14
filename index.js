@@ -130,35 +130,78 @@ const bad = (res, code, msg) => res.status(code).json({ error: msg });
 
 app.get("/", (req, res) => ok(res, { ok: true, service: "room-reservations" }));
 
-app.post("/reserve", async (req, res) => {
+// app.post("/reserve", async (req, res) => {
+//   try {
+//     const { userId, building, groupSize, startTime, endTime, equipment } = req.body;
+//     if (!userId || !groupSize || !startTime || !endTime) {
+//       return res.status(400).json({ error: "userId, groupSize, startTime, endTime are required" });
+//     }
+//     const gs = Number(groupSize);
+//     if (!Number.isFinite(gs) || gs <= 0) {
+//       return res.status(400).json({ error: "groupSize must be a positive number" });
+//     }
+
+//     const chosen = await findAvailableRoom(building, gs, startTime, endTime, { strict });
+//     if (!chosen) {
+//       return res.status(200).json({ error: "No room available for that size and time across buildings" });
+//     }
+
+//     const result = await pool.query(
+//       `INSERT INTO reservations (user_id, building, room, group_size, start_time, end_time, equipment)
+//        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+//       [userId, normalizeBuilding(chosen.building), chosen.room, gs, startTime, endTime, equipment || null]
+//     );
+
+//     const row = result.rows[0];
+//     res.status(200).json(row);
+//   } catch (e) {
+//     console.error("Reserve error:", e);
+//     res.status(400).json({ error: e.message });
+//   }
+// });
+
+app.post('/reserve', express.json(), async (req, res) => {
   try {
-    const { userId, building, groupSize, startTime, endTime, equipment } = req.body;
-    if (!userId || !groupSize || !startTime || !endTime) {
-      return res.status(400).json({ error: "userId, groupSize, startTime, endTime are required" });
-    }
-    const gs = Number(groupSize);
-    if (!Number.isFinite(gs) || gs <= 0) {
-      return res.status(400).json({ error: "groupSize must be a positive number" });
-    }
+    const b = req.body || {};
 
-    const chosen = await findAvailableRoom(building, gs, startTime, endTime, { strict });
-    if (!chosen) {
-      return res.status(200).json({ error: "No room available for that size and time across buildings" });
+    // Accept both camelCase and snake_case from clients
+    const userId    = b.userId ?? b.user_id ?? null;
+    const building  = (b.building === null || b.building === undefined) ? null : String(b.building);
+    const groupSize = Number(b.groupSize ?? b.group_size);
+    const startRaw  = b.startTime ?? b.start_time;
+    const endRaw    = b.endTime   ?? b.end_time;
+
+    const strict =
+      b.strict === true ||
+      b.strict === 1 ||
+      b.strict === '1' ||
+      b.strict === 'true';
+
+    // Basic validation with useful error messages (so Alexa can speak them)
+    if (!Number.isFinite(groupSize) || groupSize <= 0) {
+      return res.status(400).json({ error: 'groupSize must be a positive number' });
     }
+    const start = new Date(startRaw);
+    const end   = new Date(endRaw);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ error: 'startTime and endTime must be ISO-8601 strings' });
+    }
+    const created = await reserveRoom({
+      userId,
+      building,           // may be null: your logic should handle “any building” when strict=false
+      groupSize,
+      start_time: start.toISOString(),
+      end_time:   end.toISOString(),
+      strict
+    });
 
-    const result = await pool.query(
-      `INSERT INTO reservations (user_id, building, room, group_size, start_time, end_time, equipment)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [userId, normalizeBuilding(chosen.building), chosen.room, gs, startTime, endTime, equipment || null]
-    );
-
-    const row = result.rows[0];
-    res.status(200).json(row);
+    return res.status(201).json(created);
   } catch (e) {
-    console.error("Reserve error:", e);
-    res.status(400).json({ error: e.message });
+    console.error('Reserve error:', e);
+    return res.status(500).json({ error: String(e && e.message || e) });
   }
 });
+
 
 
 app.get("/get", async (req, res) => {
